@@ -1,8 +1,6 @@
 # Telegram 频道消息推送 for Feishu v1.0.0
-![Telegram Channel for Feishu Logo](https://raw.githubusercontent.com/PANGPANGDigital/Telegram-Channel-for-Feishu/main/assets/logo.png)
-
 <p align="center">
-  <img src="https://raw.githubusercontent.com/PANGPANGDigital/Telegram-Channel-for-Feishu/main/assets/logo.png" width="200">
+  <img src="https://github.com/PANGPANGDigital/Telegram-Channel-for-Feishu/blob/main/logo.png" width="200">
 </p>
 
 <h1 align="center">
