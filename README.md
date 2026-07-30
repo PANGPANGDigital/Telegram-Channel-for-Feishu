@@ -1,5 +1,22 @@
 # Telegram 频道消息推送 for Feishu v1.0.0
 
+<p align="center">
+  <img src="./assets/logo.png" width="200">
+</p>
+
+<h1 align="center">
+Telegram Channel for Feishu
+</h1>
+
+<p align="center">
+🚀 Monitor Telegram channels and push messages to Feishu Webhook
+</p>
+
+<p align="center">
+Telegram 频道监控 + 飞书通知机器人
+</p>
+
+
 这是一个轮询 Telegram 公开频道页面，并通过飞书自定义机器人 Webhook 发送富文本通知的服务。
 
 本项目不登录 Telegram 个人账号，也不需要创建或加入 Telegram 机器人。程序通过本地 HTTP 代理访问公开频道的 `https://t.me/s/<频道>` 页面，按配置间隔检查新消息。首次启动会推送正在监控的频道列表，并尝试推送每个频道当前最新的一条文字消息。
