@@ -1,0 +1,28 @@
+version: "1.0.0"
+
+# 飞书消息中的时间显示时区。
+timezone: Asia/Shanghai
+
+# 持久化首次启动标记、已推送消息 ID，避免容器重启后重复推送。
+state_file: /app/data/state.json
+
+# Telegram 公开频道页面使用的本地 HTTP 代理。
+# 群晖 NAS 使用 host 网络时，127.0.0.1 指向 NAS 主机本身。
+proxy:
+  enabled: true
+  url: http://127.0.0.1:7890
+
+# 公开频道页面轮询间隔，单位：秒。
+poll_interval_seconds: 30
+
+# 每次访问 Telegram 公开频道页面的超时时间，单位：秒。
+request_timeout_seconds: 20
+
+# 只支持公开频道；程序会访问对应的 https://t.me/s/ChannelName 页面。
+# username 支持 @ChannelName 或 https://t.me/ChannelName。
+channels:
+  - name: 示例频道
+    username: https://t.me/NewlearnerChannel
+
+  # - name: 第二个频道
+  #   username: "@AnotherChannel"

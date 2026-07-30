@@ -1,0 +1,25 @@
+services:
+  telegram-feishu:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: telegram-feishu:1.0.0
+    container_name: telegram-feishu
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      TZ: Asia/Shanghai
+      LOG_LEVEL: INFO
+
+      # 请替换为飞书自定义机器人 Webhook 地址。
+      FEISHU_WEBHOOK_URL: "请替换为飞书 Webhook URL"
+
+      # 飞书机器人配置了签名密钥时填写；未配置则留空。
+      FEISHU_SIGNING_SECRET: ""
+    volumes:
+      - ./config:/app/config:ro
+      # Docker 命名卷避免群晖 bind mount 的 UID/GID 权限问题。
+      - telegram_feishu_data:/app/data
+
+volumes:
+  telegram_feishu_data:
