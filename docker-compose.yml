@@ -18,8 +18,4 @@ services:
       FEISHU_SIGNING_SECRET: ""
     volumes:
       - ./config:/app/config:ro
-      # Docker 命名卷避免群晖 bind mount 的 UID/GID 权限问题。
-      - telegram_feishu_data:/app/data
-
-volumes:
-  telegram_feishu_data:
+      - ./data:/app/data
