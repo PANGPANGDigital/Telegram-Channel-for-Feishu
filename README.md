@@ -28,6 +28,9 @@ Telegram 频道监控 + 飞书通知机器人
 - 飞书使用 `post` 富文本消息
 - 支持飞书 Webhook 签名密钥
 - 支持 Telegram 公开频道页面的本地 HTTP/HTTPS 代理
+- 持久化每个频道最近一次成功抓取时间、连续失败次数和最近错误
+- 连续抓取失败时通过飞书告警，恢复后发送恢复通知
+- 按频道独立指数退避；HTTP 响应提供 `Retry-After` 时遵守该时间
 - 首次启动和后续重启都会推送当前监控频道列表
 - 使用 Docker 命名卷持久化初始化状态和已推送消息 ID
 - Docker Compose 使用 host 网络
@@ -60,12 +63,19 @@ proxy:
   enabled: true
   url: http://127.0.0.1:7890
 
+monitoring:
+  failure_alert_threshold: 3
+  backoff_initial_seconds: 30
+  backoff_max_seconds: 900
+
 channels:
   - name: 示例频道
     username: https://t.me/NewlearnerChannel
   - name: 另一个频道
     username: "@AnotherChannel"
 ```
+
+`monitoring` 中的配置均可省略，默认连续失败 3 次后告警，退避间隔从 30 秒开始，最长 900 秒。失败计数和最近成功抓取时间保存在 `/app/data/state.json`，容器重启后继续生效。每次成功抓取也会写入应用日志；同一故障只告警一次，成功恢复后发送一条恢复通知。
 
 ### 编辑 `docker-compose.yml`
 
@@ -125,6 +135,8 @@ docker compose down
 ### 日志显示收不到频道消息
 
 确认频道是公开频道；确认频道 username 与 `config/config.yaml` 中配置一致；确认 Telegram 代理可以访问 `https://t.me/s/<频道>` 页面。
+
+如果 Telegram 抓取连续失败，日志会包含异常类型或 HTTP 状态码、连续失败次数和下次尝试时间。达到 `monitoring.failure_alert_threshold` 后会收到飞书告警；恢复后会收到恢复通知。HTTP `Retry-After` 响应头会覆盖较短的本地退避时间。
 
 ### 飞书返回签名错误
 

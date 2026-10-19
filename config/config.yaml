@@ -18,6 +18,12 @@ poll_interval_seconds: 30
 # 每次访问 Telegram 公开频道页面的超时时间，单位：秒。
 request_timeout_seconds: 20
 
+# 连续抓取失败达到阈值后通过飞书告警；重试间隔按指数增长并遵守 Retry-After。
+monitoring:
+  failure_alert_threshold: 3
+  backoff_initial_seconds: 30
+  backoff_max_seconds: 900
+
 # 只支持公开频道；程序会访问对应的 https://t.me/s/ChannelName 页面。
 # username 支持 @ChannelName 或 https://t.me/ChannelName。
 channels:

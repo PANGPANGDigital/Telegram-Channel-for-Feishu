@@ -6,7 +6,8 @@ import asyncio
 import logging
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 
 import httpx
 from bs4 import BeautifulSoup, Tag
@@ -50,11 +51,39 @@ class PublicChannelMonitor:
         channel: ChannelConfig,
     ) -> list[PublicChannelMessage] | None:
         page_url = f"https://t.me/s/{channel.username}"
+        health = await self.state.fetch_health(channel.key)
+        retry_after = self._parse_timestamp(health.get("retry_after"))
+        now = datetime.now(timezone.utc)
+        if retry_after is not None and retry_after > now:
+            logger.debug(
+                "频道仍处于退避期，跳过本轮抓取：%s，下次尝试时间：%s",
+                channel.username,
+                retry_after.isoformat(),
+            )
+            return None
+
         try:
             response = await client.get(page_url)
             response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            retry_after_seconds = self._retry_after_seconds(
+                exc.response.headers.get("Retry-After")
+            )
+            error = (
+                f"HTTP {exc.response.status_code} {exc.response.reason_phrase}; "
+                f"url={exc.request.url}"
+            )
+            await self._record_fetch_failure(channel, error, retry_after_seconds)
+            return None
+        except httpx.RequestError as exc:
+            request = getattr(exc, "request", None)
+            request_url = str(request.url) if request is not None else page_url
+            error = f"{type(exc).__name__}: {exc!r}; url={request_url}"
+            await self._record_fetch_failure(channel, error)
+            return None
         except httpx.HTTPError as exc:
-            logger.warning("读取公开频道失败：%s（%s）", channel.username, exc)
+            error = f"{type(exc).__name__}: {exc!r}; url={page_url}"
+            await self._record_fetch_failure(channel, error)
             return None
 
         soup = BeautifulSoup(response.text, "html.parser")
@@ -65,9 +94,126 @@ class PublicChannelMonitor:
                 messages.append(message)
 
         messages.sort(key=lambda item: item.message_id)
+        fetched_at = datetime.now(timezone.utc)
+        health = await self.state.record_fetch_success(channel.key, fetched_at.isoformat())
+        logger.info(
+            "读取公开频道成功：%s，成功时间：%s，解析到 %s 条文字消息",
+            channel.username,
+            fetched_at.astimezone(self.config.timezone_info).strftime("%Y-%m-%d %H:%M:%S"),
+            len(messages),
+        )
+        if health["recovery_pending"]:
+            await self._notify_fetch_recovery(channel, health)
+
         if not messages:
             logger.info("频道当前页面没有可推送的文字消息：%s", channel.username)
         return messages
+
+    async def _record_fetch_failure(
+        self,
+        channel: ChannelConfig,
+        error: str,
+        server_retry_after_seconds: float | None = None,
+    ) -> None:
+        previous = await self.state.fetch_health(channel.key)
+        failure_number = int(previous["consecutive_failures"]) + 1
+        exponent = min(failure_number - 1, 30)
+        backoff_seconds = min(
+            self.config.monitoring.backoff_max_seconds,
+            self.config.monitoring.backoff_initial_seconds * (2**exponent),
+        )
+        if server_retry_after_seconds is not None:
+            backoff_seconds = max(backoff_seconds, server_retry_after_seconds)
+
+        occurred_at = datetime.now(timezone.utc)
+        retry_at = occurred_at + timedelta(seconds=backoff_seconds)
+        health = await self.state.record_fetch_failure(
+            channel.key,
+            occurred_at.isoformat(),
+            error,
+            retry_at.isoformat(),
+        )
+        logger.warning(
+            "读取公开频道失败：%s；连续失败 %s 次；错误：%s；下次尝试不早于 %s",
+            channel.username,
+            health["consecutive_failures"],
+            error,
+            retry_at.astimezone(self.config.timezone_info).strftime("%Y-%m-%d %H:%M:%S"),
+        )
+
+        if (
+            health["consecutive_failures"] >= self.config.monitoring.failure_alert_threshold
+            and not health["alerted"]
+        ):
+            title = f"Telegram 频道抓取异常 · {channel.name}"
+            elements = [
+                self.feishu.text(f"频道：{channel.name}（@{channel.username}）\n"),
+                self.feishu.text(f"连续失败：{health['consecutive_failures']} 次\n"),
+                self.feishu.text(
+                    f"最近成功抓取：{self._format_timestamp(health['last_success_at'])}\n"
+                ),
+                self.feishu.text(f"最近错误：{health['last_error']}\n"),
+                self.feishu.text(
+                    "下次尝试不早于："
+                    f"{retry_at.astimezone(self.config.timezone_info):%Y-%m-%d %H:%M:%S}"
+                    f"（{self.config.timezone}）"
+                ),
+            ]
+            if await self._send_with_retries(title, elements):
+                await self.state.mark_fetch_alerted(channel.key)
+
+    async def _notify_fetch_recovery(
+        self,
+        channel: ChannelConfig,
+        health: dict[str, object],
+    ) -> None:
+        title = f"Telegram 频道抓取已恢复 · {channel.name}"
+        elements = [
+            self.feishu.text(f"频道：{channel.name}（@{channel.username}）\n"),
+            self.feishu.text(
+                f"恢复时间：{self._format_timestamp(health.get('last_success_at'))}\n"
+            ),
+            self.feishu.text("页面抓取已成功，后续轮询已恢复。"),
+        ]
+        if await self._send_with_retries(title, elements):
+            await self.state.mark_fetch_recovery_notified(channel.key)
+
+    def _format_timestamp(self, value: object) -> str:
+        parsed = self._parse_timestamp(value)
+        if parsed is None:
+            return "暂无成功记录"
+        return (
+            parsed.astimezone(self.config.timezone_info).strftime("%Y-%m-%d %H:%M:%S")
+            + f"（{self.config.timezone}）"
+        )
+
+    @staticmethod
+    def _parse_timestamp(value: object) -> datetime | None:
+        if not isinstance(value, str) or not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed
+
+    @staticmethod
+    def _retry_after_seconds(value: str | None) -> float | None:
+        if not value:
+            return None
+        try:
+            return max(0.0, float(value))
+        except ValueError:
+            pass
+        try:
+            retry_at = parsedate_to_datetime(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=timezone.utc)
+        return max(0.0, (retry_at - datetime.now(timezone.utc)).total_seconds())
 
     @staticmethod
     def _parse_message(node: Tag, channel: ChannelConfig) -> PublicChannelMessage | None:

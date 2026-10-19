@@ -39,6 +39,15 @@ class ProxyConfig:
 
 
 @dataclass(frozen=True)
+class MonitoringConfig:
+    """Failure alerting and per-channel retry backoff settings."""
+
+    failure_alert_threshold: int
+    backoff_initial_seconds: int
+    backoff_max_seconds: int
+
+
+@dataclass(frozen=True)
 class AppConfig:
     """Validated application configuration."""
 
@@ -48,6 +57,7 @@ class AppConfig:
     state_file: Path
     channels: tuple[ChannelConfig, ...]
     proxy: ProxyConfig
+    monitoring: MonitoringConfig
     feishu_webhook_url: str
     feishu_signing_secret: str | None
     poll_interval_seconds: int
@@ -175,6 +185,29 @@ def load_config(path: str | Path = "/app/config/config.yaml") -> AppConfig:
     if request_timeout_seconds <= 0:
         raise ConfigError("request_timeout_seconds 必须大于 0")
 
+    raw_monitoring = data.get("monitoring", {})
+    if raw_monitoring is None:
+        raw_monitoring = {}
+    if not isinstance(raw_monitoring, dict):
+        raise ConfigError("monitoring 必须是对象")
+
+    def _monitoring_int(name: str, default: int) -> int:
+        try:
+            value = int(raw_monitoring.get(name, default))
+        except (TypeError, ValueError) as exc:
+            raise ConfigError(f"monitoring.{name} 必须是整数") from exc
+        if value < 1:
+            raise ConfigError(f"monitoring.{name} 必须大于 0")
+        return value
+
+    failure_alert_threshold = _monitoring_int("failure_alert_threshold", 3)
+    backoff_initial_seconds = _monitoring_int("backoff_initial_seconds", 30)
+    backoff_max_seconds = _monitoring_int("backoff_max_seconds", 900)
+    if backoff_max_seconds < backoff_initial_seconds:
+        raise ConfigError(
+            "monitoring.backoff_max_seconds 不能小于 monitoring.backoff_initial_seconds"
+        )
+
     return AppConfig(
         version=version,
         timezone=timezone,
@@ -182,6 +215,11 @@ def load_config(path: str | Path = "/app/config/config.yaml") -> AppConfig:
         state_file=state_file,
         channels=_parse_channels(data.get("channels")),
         proxy=ProxyConfig(enabled=proxy_enabled, url=proxy_url if proxy_enabled else None),
+        monitoring=MonitoringConfig(
+            failure_alert_threshold=failure_alert_threshold,
+            backoff_initial_seconds=backoff_initial_seconds,
+            backoff_max_seconds=backoff_max_seconds,
+        ),
         feishu_webhook_url=_required_env("FEISHU_WEBHOOK_URL"),
         feishu_signing_secret=_optional_env("FEISHU_SIGNING_SECRET"),
         poll_interval_seconds=poll_interval_seconds,
